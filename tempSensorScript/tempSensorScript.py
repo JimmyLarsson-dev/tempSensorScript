@@ -101,15 +101,15 @@ def send_temperatures(temps_c: dict, temps_int: dict, min_temp_int: int) -> None
         "min_temperature_int_c": min_temp_int,
     }
 
-    try:
+    # try:
         # resp = requests.post(API_URL, json=payload, headers=headers, timeout=5)
         # resp.raise_for_status()
         # logging.info(
         #     "Sent temperatures to API, status=%d",
         #     resp.status_code
         # )
-    except Exception as e:
-        logging.error("Failed to send temperatures to API: %s", e)
+    # except Exception as e:
+    #     logging.error("Failed to send temperatures to API: %s", e)
 
 def main():
     logging.basicConfig(
