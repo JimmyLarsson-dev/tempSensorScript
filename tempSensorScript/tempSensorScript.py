@@ -14,37 +14,37 @@ SENSOR_GLOB = "/sys/bus/w1/devices/28-*/temperature"
 # GPIO pin (BCM numbering)
 GPIO_PIN = 17
 
-# Temperature threshold (°C)
 THRESHOLD_C = 10
-
-# How often to read (seconds)
 POLL_INTERVAL_SECONDS = 60
-
-# API configuration
-API_URL = "https://example.com/temperature"  # <-- change this to your API endpoint
-API_TOKEN = None  # e.g. "your-secret-token" or leave as None if not used
+API_URL = "https://example.com/temperature"
+API_TOKEN = None
 
 # ---------- FUNCTIONS ----------
 
-def read_temperature_c() -> float:
+def read_all_temperatures_c() -> dict:
     """
-    Reads the temperature in °C from the 1-Wire sensor.
-    Assumes /sys/bus/w1/devices/28-*/temperature contains value in 1/1000 °C.
-    """
+       Reads all DS18B20 sensors and returns a dict:
+           { "28-xxxxxxxxxxxx": temp_c, ... }
+       Temperatures are in °C.
+       """
+    temps= {}
     paths = glob.glob(SENSOR_GLOB)
     if not paths:
-        raise FileNotFoundError(f"No sensor found matching {SENSOR_GLOB}")
+        raise FileNotFoundError(f"No sensors found matching {SENSOR_GLOB}")
 
-    path = paths[0]  # use the first sensor found
-    with open(path, "r") as f:
-        raw = f.read().strip()
+    for path in paths:
+        sensor_dir = path.split("/")[-2]  # e.g. '28-3c01d075c5ff'
+        with open(path, "r") as f:
+            raw = f.read().strip()
 
-    try:
-        milli_c = int(raw)
-    except ValueError:
-        raise ValueError(f"Could not parse temperature from '{raw}'")
+        try:
+            milli_c = int(raw)
+        except ValueError:
+            raise ValueError(f"Could not parse temperature from '{raw}' for {sensor_dir}")
 
-    return milli_c / 1000.0
+        temps[sensor_dir] = milli_c / 1000.0
+
+    return temps
 
 
 def setup_gpio():
@@ -52,56 +52,64 @@ def setup_gpio():
     GPIO.setup(GPIO_PIN, GPIO.OUT, initial=GPIO.LOW)
 
 
-def set_output_for_temp(temp_c: float) -> int:
+def set_output_based_on_temps(temps_int: dict) -> int:
     """
-    Convert to whole degrees and set GPIO:
-    - HIGH if temp < THRESHOLD_C
-    - LOW  if temp >= THRESHOLD_C
-    Returns the integer temperature used.
-    """
-    temp_int = int(round(temp_c))
+        Takes a dict of integer temps {sensor_id: temp_int}.
+        Uses the MINIMUM temp to decide GPIO state:
+            - HIGH if min_temp < THRESHOLD_C
+            - LOW  if min_temp >= THRESHOLD_C
+        Returns the min temperature used.
+        """
+    min_temp = min(temps_int.values())
 
-    if temp_int < THRESHOLD_C:
+    if min_temp < THRESHOLD_C:
         GPIO.output(GPIO_PIN, GPIO.HIGH)
         logging.info(
-            "Temperature %d°C < %d°C -> GPIO %d HIGH",
-            temp_int, THRESHOLD_C, GPIO_PIN
+            "Min temperature %d°C < %d°C -> GPIO %d HIGH",
+            min_temp, THRESHOLD_C, GPIO_PIN
         )
     else:
         GPIO.output(GPIO_PIN, GPIO.LOW)
         logging.info(
-            "Temperature %d°C >= %d°C -> GPIO %d LOW",
-            temp_int, THRESHOLD_C, GPIO_PIN
+            "Min temperature %d°C >= %d°C -> GPIO %d LOW",
+            min_temp, THRESHOLD_C, GPIO_PIN
         )
+    return min_temp
 
-    return temp_int
 
-
-def send_temperature(temp_c: float, temp_int: int):
+def send_temperatures(temps_c: dict, temps_int: dict, min_temp_int: int) -> None:
     """
-    Sends the temperature to the API as JSON via HTTP POST.
-    Adjust the payload structure as needed to match your API.
+    Sends all temperature readings to the API as JSON via HTTP POST.
+    Adjust the payload structure to match your API.
     """
     headers = {"Content-Type": "application/json"}
     if API_TOKEN:
         headers["Authorization"] = f"Bearer {API_TOKEN}"
 
+    sensors_payload = []
+    for sensor_id in temps_c:
+        sensors_payload.append(
+            {
+                "id": sensor_id,
+                "temperature_c": temps_c[sensor_id],
+                "temperature_int_c": temps_int[sensor_id],
+            }
+        )
     payload = {
-        "temperature_c": temp_c,
-        "temperature_int_c": temp_int,
-        "unit": "C"
+        "unit": "C",
+        "sensors": sensors_payload,
+        "min_temperature_int_c": min_temp_int,
     }
 
-    # try:
-    #     resp = requests.post(API_URL, json=payload, headers=headers, timeout=5)
-    #     resp.raise_for_status()
-    #     logging.info(
-    #         "Sent temperature to API: %.2f°C (int %d°C), status=%d",
-    #         temp_c, temp_int, resp.status_code
-    #     )
-    # except Exception as e:
-    #     logging.error("Failed to send temperature to API: %s", e)
-
+    try:
+        # resp = requests.post(API_URL, json=payload, headers=headers, timeout=5)
+        # resp.raise_for_status()
+        # logging.info(
+        #     "Sent temperatures to API, status=%d",
+        #     resp.status_code
+        # )
+    except Exception as e:
+        logging.error("Failed to send temperatures to API: %s", e)
 
 def main():
     logging.basicConfig(
@@ -109,15 +117,17 @@ def main():
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
-    logging.info("Starting temperature monitor")
+    logging.info("Starting temperature monitor (multi-sensor)")
     setup_gpio()
 
     try:
         while True:
             try:
-                temp_c = read_temperature_c()
-                temp_int = set_output_for_temp(temp_c)
-                send_temperature(temp_c, temp_int)
+                temps_c = read_all_temperatures_c()
+                temps_int = {sid: int(round(temp)) for sid, temp in temps_c.items()}
+                logging.info("Temperatures: %s", temps_int)
+                min_temp_int = set_output_based_on_temps(temps_int)
+                send_temperatures(temps_c, temps_int, min_temp_int)
             except Exception as e:
                 logging.error("Error in main loop: %s", e)
 
