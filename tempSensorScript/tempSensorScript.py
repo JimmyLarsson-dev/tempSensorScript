@@ -16,7 +16,7 @@ GPIO_PIN = 17
 
 THRESHOLD_C = 10
 POLL_INTERVAL_SECONDS = 60
-API_URL = "http://192.168.1.24/report"
+API_URL = "http://192.168.1.24:8080/temperatures/report"
 API_TOKEN = None
 
 # ---------- FUNCTIONS ----------
