@@ -16,7 +16,7 @@ GPIO_PIN = 17
 
 THRESHOLD_C = 10
 POLL_INTERVAL_SECONDS = 60
-API_URL = "https://example.com/temperature"
+API_URL = "http://192.168.1.24/report"
 API_TOKEN = None
 
 # ---------- FUNCTIONS ----------
@@ -52,30 +52,19 @@ def setup_gpio():
     GPIO.setup(GPIO_PIN, GPIO.OUT, initial=GPIO.LOW)
 
 
-def set_output_based_on_temps(temps_int: dict) -> int:
-    """
-        Takes a dict of integer temps {sensor_id: temp_int}.
-        Uses the MINIMUM temp to decide GPIO state:
-            - HIGH if min_temp < THRESHOLD_C
-            - LOW  if min_temp >= THRESHOLD_C
-        Returns the min temperature used.
-        """
-    min_temp = min(temps_int.values())
+def set_output_based_on_temps(temps_c: dict) -> float:
+    min_temp = min(temps_c.values())
+    enabled = min_temp < THRESHOLD_C
 
-    if min_temp < THRESHOLD_C:
-        GPIO.output(GPIO_PIN, GPIO.HIGH)
-        logging.info(
-            "Min temperature %d°C < %d°C -> GPIO %d HIGH",
-            min_temp, THRESHOLD_C, GPIO_PIN
-        )
-    else:
-        GPIO.output(GPIO_PIN, GPIO.LOW)
-        logging.info(
-            "Min temperature %d°C >= %d°C -> GPIO %d LOW",
-            min_temp, THRESHOLD_C, GPIO_PIN
-        )
+    GPIO.output(GPIO_PIN, GPIO.HIGH if enabled else GPIO.LOW)
+
+    logging.info(
+        "Min temperature %.3f°C -> GPIO %d %s",
+        min_temp,
+        GPIO_PIN,
+        "HIGH" if enabled else "LOW",
+    )
     return min_temp
-
 
 def send_temperatures(temps_c: dict, temps_int: dict, min_temp_int: int) -> None:
     """
@@ -101,15 +90,15 @@ def send_temperatures(temps_c: dict, temps_int: dict, min_temp_int: int) -> None
         "min_temperature_int_c": min_temp_int,
     }
 
-    # try:
-        # resp = requests.post(API_URL, json=payload, headers=headers, timeout=5)
-        # resp.raise_for_status()
-        # logging.info(
-        #     "Sent temperatures to API, status=%d",
-        #     resp.status_code
-        # )
-    # except Exception as e:
-    #     logging.error("Failed to send temperatures to API: %s", e)
+    try:
+        resp = requests.post(API_URL, json=payload, headers=headers, timeout=5)
+        resp.raise_for_status()
+        logging.info(
+            "Sent temperatures to API, status=%d",
+            resp.status_code
+        )
+    except Exception as e:
+        logging.error("Failed to send temperatures to API: %s", e)
 
 def main():
     logging.basicConfig(
@@ -126,8 +115,10 @@ def main():
                 temps_c = read_all_temperatures_c()
                 temps_int = {sid: int(round(temp)) for sid, temp in temps_c.items()}
                 logging.info("Temperatures: %s", temps_int)
-                min_temp_int = set_output_based_on_temps(temps_int)
-                send_temperatures(temps_c, temps_int, min_temp_int)
+                min_temp_c = set_output_based_on_temps(temps_c)
+                send_temperatures(temps_c, temps_int, int(round(min_temp_c)))
+                # min_temp_int = set_output_based_on_temps(temps_int)
+                # send_temperatures(temps_c, temps_int, min_temp_int)
             except Exception as e:
                 logging.error("Error in main loop: %s", e)
 
