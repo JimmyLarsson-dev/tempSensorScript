@@ -3,6 +3,7 @@ import glob
 import time
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 import requests
 import RPi.GPIO as GPIO
 
@@ -18,8 +19,13 @@ THRESHOLD_C = 10
 POLL_INTERVAL_SECONDS = 60
 API_URL = "http://192.168.1.24:8080/temperatures/report"
 API_TOKEN = None
+MIN_TEMPERATURE_FILE = Path(__file__).resolve().parent / "min_temperature.txt"
 
 # ---------- FUNCTIONS ----------
+
+def read_min_temperature() -> int:
+    raw = MIN_TEMPERATURE_FILE.read_text(encoding="utf-8").strip()
+    return int(raw)
 
 def read_all_temperatures_c() -> dict:
     """
@@ -76,10 +82,21 @@ def send_temperatures(temps_c: dict) -> None:
         )
         return
 
+    try:
+        min_temperature = read_min_temperature()
+    except (OSError, ValueError) as e:
+        logging.error(
+            "Could not read integer from %s: %s. Report not sent.",
+            MIN_TEMPERATURE_FILE,
+            e,
+        )
+        return
+
     payload = {
         "temperature1": int(round(temps_c[sensor_ids[0]])),
         "temperature2": int(round(temps_c[sensor_ids[1]])),
         "timeStamp": datetime.now(timezone.utc).isoformat(),
+        "minTemperature": min_temperature,
     }
 
     headers = {}
