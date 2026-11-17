@@ -2,7 +2,7 @@
 import glob
 import time
 import logging
-
+from datetime import datetime, timezone
 import requests
 import RPi.GPIO as GPIO
 
@@ -66,38 +66,36 @@ def set_output_based_on_temps(temps_c: dict) -> float:
     )
     return min_temp
 
-def send_temperatures(temps_c: dict, temps_int: dict, min_temp_int: int) -> None:
-    """
-    Sends all temperature readings to the API as JSON via HTTP POST.
-    Adjust the payload structure to match your API.
-    """
-    headers = {"Content-Type": "application/json"}
+def send_temperatures(temps_c: dict) -> None:
+    sensor_ids = sorted(temps_c)
+
+    if len(sensor_ids) != 2:
+        logging.error(
+            "Expected 2 sensors, found %d. Report not sent.",
+            len(sensor_ids),
+        )
+        return
+
+    payload = {
+        "temperature1": int(round(temps_c[sensor_ids[0]])),
+        "temperature2": int(round(temps_c[sensor_ids[1]])),
+        "timeStamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    headers = {}
     if API_TOKEN:
         headers["Authorization"] = f"Bearer {API_TOKEN}"
 
-    sensors_payload = []
-    for sensor_id in temps_c:
-        sensors_payload.append(
-            {
-                "id": sensor_id,
-                "temperature_c": temps_c[sensor_id],
-                "temperature_int_c": temps_int[sensor_id],
-            }
-        )
-    payload = {
-        "unit": "C",
-        "sensors": sensors_payload,
-        "min_temperature_int_c": min_temp_int,
-    }
-
     try:
-        resp = requests.post(API_URL, json=payload, headers=headers, timeout=5)
-        resp.raise_for_status()
-        logging.info(
-            "Sent temperatures to API, status=%d",
-            resp.status_code
+        resp = requests.post(
+            API_URL,
+            json=payload,
+            headers=headers,
+            timeout=5,
         )
-    except Exception as e:
+        resp.raise_for_status()
+        logging.info("Sent temperature report: %s", payload)
+    except requests.exceptions.RequestException as e:
         logging.error("Failed to send temperatures to API: %s", e)
 
 def main():
@@ -116,7 +114,7 @@ def main():
                 temps_int = {sid: int(round(temp)) for sid, temp in temps_c.items()}
                 logging.info("Temperatures: %s", temps_int)
                 min_temp_c = set_output_based_on_temps(temps_c)
-                send_temperatures(temps_c, temps_int, int(round(min_temp_c)))
+                send_temperatures(temps_c)
                 # min_temp_int = set_output_based_on_temps(temps_int)
                 # send_temperatures(temps_c, temps_int, min_temp_int)
             except Exception as e:
